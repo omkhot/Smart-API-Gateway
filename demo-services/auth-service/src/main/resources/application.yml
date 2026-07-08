@@ -1,0 +1,47 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: auth-service
+
+  datasource:
+    url: jdbc:h2:mem:authdb;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    open-in-view: false
+    defer-datasource-initialization: true
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+# ------------------------------------------------------------------
+# JWT signing config. The "secret" value below MUST be IDENTICAL to
+# the jwt.secret configured in gateway-service/application.yml - the
+# gateway validates every token's signature using this same value.
+# Overridable via the JWT_SECRET env var (docker-compose sets the same
+# env var on both services so they always stay in sync automatically).
+# In a real system this would come from a shared secrets manager, not
+# a literal value duplicated in two YAML files.
+# ------------------------------------------------------------------
+jwt:
+  secret: ${JWT_SECRET:SmartApiGatewayDemoSecretKeyForJWTSigning2026ChangeInProduction!}
+  expiration-ms: 3600000   # 1 hour
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    com.demo.auth: INFO

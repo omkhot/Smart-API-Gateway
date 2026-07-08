@@ -1,0 +1,208 @@
+services:
+
+  # ------------------------------------------------------------------
+  # Infrastructure
+  # ------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - sag-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ------------------------------------------------------------------
+  # Demo services (e-commerce backend used to exercise the gateway)
+  # ------------------------------------------------------------------
+  auth-service:
+    build:
+      context: .
+      dockerfile: demo-services/auth-service/Dockerfile
+    container_name: auth-service
+    ports:
+      - "8084:8084"
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-SmartApiGatewayDemoSecretKeyForJWTSigning2026ChangeInProduction!}
+    networks:
+      - sag-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8084/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  user-service:
+    build:
+      context: .
+      dockerfile: demo-services/user-service/Dockerfile
+    container_name: user-service
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    networks:
+      - sag-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # This is instance #1 of product-service, and the ONLY one order-service
+  # ever talks to directly (its config is untouched from earlier phases).
+  product-service:
+    build:
+      context: .
+      dockerfile: demo-services/product-service/Dockerfile
+    container_name: product-service
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    networks:
+      - sag-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Instance #2 of product-service - added purely so the GATEWAY has two
+  # real instances to round-robin across. Exact same image as instance
+  # #1, just a different container identity. order-service never talks
+  # to this one directly. NOTE: since each instance has its own
+  # in-memory H2 database, their product/stock data is independent -
+  # that's an accepted demo simplification (see README).
+  product-service-2:
+    build:
+      context: .
+      dockerfile: demo-services/product-service/Dockerfile
+    container_name: product-service-2
+    ports:
+      - "8092:8082"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    networks:
+      - sag-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  order-service:
+    build:
+      context: .
+      dockerfile: demo-services/order-service/Dockerfile
+    container_name: order-service
+    ports:
+      - "8083:8083"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      user-service:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+    networks:
+      - sag-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8083/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ------------------------------------------------------------------
+  # The gateway itself
+  # ------------------------------------------------------------------
+  gateway-service:
+    build:
+      context: .
+      dockerfile: gateway-service/Dockerfile
+    container_name: gateway-service
+    ports:
+      - "8080:8080"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - AUTH_SERVICE_HOST=auth-service
+      - USER_SERVICE_HOST=user-service
+      - PRODUCT_SERVICE_1_HOST=product-service
+      - PRODUCT_SERVICE_1_PORT=8082
+      - PRODUCT_SERVICE_2_HOST=product-service-2
+      - PRODUCT_SERVICE_2_PORT=8082
+      - ORDER_SERVICE_HOST=order-service
+      - JWT_SECRET=${JWT_SECRET:-SmartApiGatewayDemoSecretKeyForJWTSigning2026ChangeInProduction!}
+    depends_on:
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
+      product-service-2:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+    networks:
+      - sag-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ------------------------------------------------------------------
+  # Metrics Dashboard
+  # ------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      gateway-service:
+        condition: service_healthy
+    networks:
+      - sag-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      # Anonymous viewing is enabled so the dashboard is visible
+      # immediately with zero login friction; admin/admin still works
+      # for editing.
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks:
+      - sag-network
+
+networks:
+  sag-network:
+    driver: bridge

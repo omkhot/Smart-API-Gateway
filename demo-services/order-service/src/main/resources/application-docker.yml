@@ -1,0 +1,5 @@
+services:
+  user-service:
+    base-url: http://user-service:8081
+  product-service:
+    base-url: http://product-service:8082

@@ -1,0 +1,250 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway-service
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: 3000   # ms - time to establish a TCP connection to a downstream service
+        response-timeout: 5s    # time to wait for a response before giving up
+
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+
+      # -----------------------------------------------------------------
+      # ROUTING / REVERSE PROXY
+      # These are the STARTING routes, loaded at boot. They can also be
+      # changed at runtime with zero downtime via the /admin/routes API
+      # (see AdminRouteController) - that's what makes routing "dynamic"
+      # here, not just declarative.
+      # -----------------------------------------------------------------
+      routes:
+
+        - id: auth-service-route
+          uri: lb://AUTH-SERVICE
+          predicates:
+            - Path=/api/auth/**
+          filters:
+            - StripPrefix=1
+            # Tighter limit than other routes: login/register are the
+            # most common target of brute-force/credential-stuffing, so
+            # they get a stricter token bucket.
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 5
+                redis-rate-limiter.burstCapacity: 10
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+
+        - id: user-service-route
+          uri: lb://USER-SERVICE
+          predicates:
+            - Path=/api/users/**
+          filters:
+            - StripPrefix=1
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+            - name: ResponseCache
+              args:
+                ttlSeconds: 30
+            - name: CircuitBreaker
+              args:
+                name: userServiceCB
+                fallbackUri: forward:/fallback/users
+            - name: Retry
+              args:
+                retries: 2
+                statuses: BAD_GATEWAY, SERVICE_UNAVAILABLE, GATEWAY_TIMEOUT
+                methods: GET
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 1000ms
+                  factor: 2
+                  basedOnPreviousValue: false
+
+        - id: product-service-route
+          uri: lb://PRODUCT-SERVICE
+          predicates:
+            - Path=/api/products/**
+          filters:
+            - StripPrefix=1
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+            - name: ResponseCache
+              args:
+                ttlSeconds: 30
+            - name: CircuitBreaker
+              args:
+                name: productServiceCB
+                fallbackUri: forward:/fallback/products
+            - name: Retry
+              args:
+                retries: 2
+                statuses: BAD_GATEWAY, SERVICE_UNAVAILABLE, GATEWAY_TIMEOUT
+                methods: GET
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 1000ms
+                  factor: 2
+                  basedOnPreviousValue: false
+
+        - id: order-service-route
+          uri: lb://ORDER-SERVICE
+          predicates:
+            - Path=/api/orders/**
+          filters:
+            - StripPrefix=1
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+            # No ResponseCache here on purpose: order data is
+            # user-specific and changes with every placed order, so
+            # caching it would risk serving stale results.
+            - name: CircuitBreaker
+              args:
+                name: orderServiceCB
+                fallbackUri: forward:/fallback/orders
+            - name: Retry
+              args:
+                retries: 2
+                statuses: BAD_GATEWAY, SERVICE_UNAVAILABLE, GATEWAY_TIMEOUT
+                methods: GET   # deliberately NOT retrying POST /orders - retrying a
+                               # non-idempotent "place order" call could double-create it
+                backoff:
+                  firstBackoff: 100ms
+                  maxBackoff: 1000ms
+                  factor: 2
+                  basedOnPreviousValue: false
+
+    # -----------------------------------------------------------------
+    # LOAD BALANCING (round robin, Spring Cloud LoadBalancer's default
+    # strategy) + HEALTH CHECKS.
+    #
+    # PRODUCT-SERVICE deliberately has TWO registered instances so there's
+    # something real to round-robin across (see docker-compose.yml,
+    # product-service-1 / product-service-2). The others have one each -
+    # still going through the same lb:// mechanism for consistency, just
+    # with nothing to balance yet.
+    #
+    # spring.cloud.loadbalancer.configurations: health-check wraps the
+    # instance list with a supplier that periodically pings each
+    # instance's /actuator/health and silently removes unhealthy ones
+    # from rotation - e.g. if you only run ONE product-service locally
+    # instead of two, the second (unreachable) instance is detected as
+    # down and automatically skipped, no errors, no restart needed.
+    # -----------------------------------------------------------------
+    discovery:
+      client:
+        simple:
+          instances:
+            AUTH-SERVICE:
+              - uri: http://${AUTH_SERVICE_HOST:localhost}:8084
+            USER-SERVICE:
+              - uri: http://${USER_SERVICE_HOST:localhost}:8081
+            PRODUCT-SERVICE:
+              # Instance 1 = the SAME product-service container/process
+              # order-service already talks to directly - untouched.
+              - uri: http://${PRODUCT_SERVICE_1_HOST:localhost}:${PRODUCT_SERVICE_1_PORT:8082}
+              # Instance 2 = a second replica added purely for this
+              # gateway's load-balancing demo. In Docker it's a separate
+              # container on the same internal port (8082) - container
+              # network isolation means that's not a conflict. Running
+              # manually (no Docker), it needs a different port on your
+              # one machine, hence the default of 8092 - see README for
+              # the exact command to start it.
+              - uri: http://${PRODUCT_SERVICE_2_HOST:localhost}:${PRODUCT_SERVICE_2_PORT:8092}
+            ORDER-SERVICE:
+              - uri: http://${ORDER_SERVICE_HOST:localhost}:8083
+
+    loadbalancer:
+      configurations: health-check
+      health-check:
+        interval: 10s
+        path:
+          default: /actuator/health
+
+# ------------------------------------------------------------------
+# JWT VALIDATION. This value MUST match jwt.secret in
+# demo-services/auth-service/application.yml exactly - that's what lets
+# the gateway verify tokens it never created. Overridable via the
+# JWT_SECRET env var (docker-compose sets the same var on both services).
+# ------------------------------------------------------------------
+jwt:
+  secret: ${JWT_SECRET:SmartApiGatewayDemoSecretKeyForJWTSigning2026ChangeInProduction!}
+
+# Paths that skip JWT validation entirely. Everything else requires a
+# valid "Authorization: Bearer <token>" header.
+gateway:
+  security:
+    public-paths:
+      - /api/auth/**
+      - /actuator/**
+      - /admin/**
+      - /fallback/**
+
+# ------------------------------------------------------------------
+# CIRCUIT BREAKER (Resilience4j) + TIMEOUT.
+# Applying "configs.default" here means EVERY circuit breaker created
+# via the route filters above (userServiceCB, productServiceCB,
+# orderServiceCB) automatically inherits these same settings - no need
+# to repeat the block three times.
+# ------------------------------------------------------------------
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowSize: 10               # look at the last 10 calls
+        minimumNumberOfCalls: 5              # need at least 5 calls before calculating a failure rate
+        failureRateThreshold: 50             # trip open if >= 50% of those calls failed
+        waitDurationInOpenState: 10s         # stay open for 10s before trying again (half-open)
+        permittedNumberOfCallsInHalfOpenState: 3
+        registerHealthIndicator: true
+  timelimiter:
+    configs:
+      default:
+        timeoutDuration: 4s   # shorter than httpclient's 5s response-timeout above, so this fires first
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # "prometheus" here is what powers the Metrics Dashboard (Grafana
+        # scrapes /actuator/prometheus - see docker-compose.yml + infra/).
+        include: health,info,gateway,prometheus,metrics
+  endpoint:
+    gateway:
+      access: unrestricted
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    com.sag.gateway: INFO
+    org.springframework.cloud.gateway: INFO
+    io.github.resilience4j: INFO

@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.sag</groupId>
+    <artifactId>smart-api-gateway-parent</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+    <name>Smart API Gateway - Parent</name>
+    <description>
+        Parent aggregator for the Smart API Gateway project: the gateway
+        service itself plus a demo e-commerce microservice suite
+        (auth-service, user-service, product-service, order-service) used
+        to exercise it.
+    </description>
+
+    <!--
+        NOTE ON MAVEN VERSION:
+        This project targets Maven 3.9.x (the current stable line).
+        Spring Boot 3.x's plugin tooling requires Maven >= 3.6.3 to resolve
+        and run correctly; Maven 3.5.x (originally requested) predates that
+        requirement and WILL fail during `mvn clean install` / IDE sync with
+        plugin-resolution errors. Please use Maven 3.9.x (bundled Maven in
+        recent IntelliJ IDEA / Eclipse is already >= 3.9, so IDE users don't
+        need to do anything extra). See README.md "Prerequisites" section.
+    -->
+
+    <modules>
+        <module>gateway-service</module>
+        <module>demo-services/auth-service</module>
+        <module>demo-services/user-service</module>
+        <module>demo-services/product-service</module>
+        <module>demo-services/order-service</module>
+    </modules>
+
+    <properties>
+        <java.version>21</java.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <spring-boot.version>3.5.16</spring-boot.version>
+        <spring-cloud.version>2025.0.3</spring-cloud.version>
+    </properties>
+
+    <!--
+        Every child module inherits Spring Boot's dependency management by
+        declaring spring-boot-starter-parent as ITS OWN parent (not this
+        POM), OR we centralize it here via dependencyManagement import.
+        We use the import-scope BOM approach here so that this parent POM
+        can remain a plain aggregator (packaging=pom) while still giving
+        every module consistent, conflict-free dependency versions.
+    -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring-boot.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <configuration>
+                        <release>21</release>
+                        <parameters>true</parameters>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+
+</project>
