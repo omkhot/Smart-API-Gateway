@@ -30,114 +30,187 @@ spring:
       # (see AdminRouteController) - that's what makes routing "dynamic"
       # here, not just declarative.
       # -----------------------------------------------------------------
+            # -----------------------------------------------------------------
+            # ROUTING / REVERSE PROXY (Method-Split for Enterprise Resiliency)
+            # -----------------------------------------------------------------
       routes:
+          - id: auth-service-route
+            uri: lb://AUTH-SERVICE
+            predicates:
+              - Path=/api/auth/**
+            filters:
+              - StripPrefix=1
+              # Login/Register endpoints are prime targets for brute-force
+              # credential stuffing, so they retain a tight token bucket.
+              - name: RequestRateLimiter
+                args:
+                  redis-rate-limiter.replenishRate: 5
+                  redis-rate-limiter.burstCapacity: 10
+                  redis-rate-limiter.requestedTokens: 1
+                  key-resolver: "#{@ipKeyResolver}"
 
-        - id: auth-service-route
-          uri: lb://AUTH-SERVICE
-          predicates:
-            - Path=/api/auth/**
-          filters:
-            - StripPrefix=1
-            # Tighter limit than other routes: login/register are the
-            # most common target of brute-force/credential-stuffing, so
-            # they get a stricter token bucket.
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 5
-                redis-rate-limiter.burstCapacity: 10
-                redis-rate-limiter.requestedTokens: 1
-                key-resolver: "#{@ipKeyResolver}"
+              # -----------------------------------------------------------------
+              # USER SERVICE: READS (Cached & High Burst Capacity)
+              # -----------------------------------------------------------------
+          - id: user-service-read-route
+            uri: lb://USER-SERVICE
+            predicates:
+              - Path=/api/users/**
+              - Method=GET
+            filters:
+              - StripPrefix=1
+              - name: RequestRateLimiter
+                args:
+                  redis-rate-limiter.replenishRate: 50    # High capacity: cache handles the load
+                  redis-rate-limiter.burstCapacity: 100
+                  redis-rate-limiter.requestedTokens: 1
+                  key-resolver: "#{@ipKeyResolver}"
+              - name: ResponseCache
+                args:
+                  ttlSeconds: 30
+              - name: CircuitBreaker
+                args:
+                  name: userServiceCB
+                  fallbackUri: forward:/fallback/users
+              - name: Retry
+                args:
+                  retries: 2
+                  statuses: BAD_GATEWAY, SERVICE_UNAVAILABLE, GATEWAY_TIMEOUT
+                  methods: GET
+                  backoff:
+                    firstBackoff: 100ms
+                    maxBackoff: 1000ms
+                    factor: 2
+                    basedOnPreviousValue: false
 
-        - id: user-service-route
-          uri: lb://USER-SERVICE
-          predicates:
-            - Path=/api/users/**
-          filters:
-            - StripPrefix=1
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 10
-                redis-rate-limiter.burstCapacity: 20
-                redis-rate-limiter.requestedTokens: 1
-                key-resolver: "#{@ipKeyResolver}"
-            - name: ResponseCache
-              args:
-                ttlSeconds: 30
-            - name: CircuitBreaker
-              args:
-                name: userServiceCB
-                fallbackUri: forward:/fallback/users
-            - name: Retry
-              args:
-                retries: 2
-                statuses: BAD_GATEWAY, SERVICE_UNAVAILABLE, GATEWAY_TIMEOUT
-                methods: GET
-                backoff:
-                  firstBackoff: 100ms
-                  maxBackoff: 1000ms
-                  factor: 2
-                  basedOnPreviousValue: false
+          # -----------------------------------------------------------------
+          # USER SERVICE: WRITES (Uncached & Strict Rate Limit)
+          # -----------------------------------------------------------------
+          - id: user-service-write-route
+            uri: lb://USER-SERVICE
+            predicates:
+              - Path=/api/users/**
+              - Method=POST,PUT,DELETE
+            filters:
+              - StripPrefix=1
+              - name: RequestRateLimiter
+                args:
+                  redis-rate-limiter.replenishRate: 5     # Stricter tracking for profile/data updates
+                  redis-rate-limiter.burstCapacity: 10
+                  redis-rate-limiter.requestedTokens: 1
+                  key-resolver: "#{@ipKeyResolver}"
+              - name: CircuitBreaker
+                args:
+                  name: userServiceCB
+                  fallbackUri: forward:/fallback/users
+              # Retry omitted on purpose: Retrying failed mutations can corrupt state
 
-        - id: product-service-route
-          uri: lb://PRODUCT-SERVICE
-          predicates:
-            - Path=/api/products/**
-          filters:
-            - StripPrefix=1
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 10
-                redis-rate-limiter.burstCapacity: 20
-                redis-rate-limiter.requestedTokens: 1
-                key-resolver: "#{@ipKeyResolver}"
-            - name: ResponseCache
-              args:
-                ttlSeconds: 30
-            - name: CircuitBreaker
-              args:
-                name: productServiceCB
-                fallbackUri: forward:/fallback/products
-            - name: Retry
-              args:
-                retries: 2
-                statuses: BAD_GATEWAY, SERVICE_UNAVAILABLE, GATEWAY_TIMEOUT
-                methods: GET
-                backoff:
-                  firstBackoff: 100ms
-                  maxBackoff: 1000ms
-                  factor: 2
-                  basedOnPreviousValue: false
+          # -----------------------------------------------------------------
+          # PRODUCT SERVICE: READS (Cached & High Burst Capacity)
+          # -----------------------------------------------------------------
+          - id: product-service-read-route
+            uri: lb://PRODUCT-SERVICE
+            predicates:
+              - Path=/api/products/**
+              - Method=GET
+            filters:
+              - StripPrefix=1
+              - name: RequestRateLimiter
+                args:
+                  redis-rate-limiter.replenishRate: 50    # High capacity: page scrolls reload fast
+                  redis-rate-limiter.burstCapacity: 100
+                  redis-rate-limiter.requestedTokens: 1
+                  key-resolver: "#{@ipKeyResolver}"
+              - name: ResponseCache
+                args:
+                  ttlSeconds: 30
+              - name: CircuitBreaker
+                args:
+                  name: productServiceCB
+                  fallbackUri: forward:/fallback/products
+              - name: Retry
+                args:
+                  retries: 2
+                  statuses: BAD_GATEWAY, SERVICE_UNAVAILABLE, GATEWAY_TIMEOUT
+                  methods: GET
+                  backoff:
+                    firstBackoff: 100ms
+                    maxBackoff: 1000ms
+                    factor: 2
+                    basedOnPreviousValue: false
 
-        - id: order-service-route
-          uri: lb://ORDER-SERVICE
-          predicates:
-            - Path=/api/orders/**
-          filters:
-            - StripPrefix=1
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: 10
-                redis-rate-limiter.burstCapacity: 20
-                redis-rate-limiter.requestedTokens: 1
-                key-resolver: "#{@ipKeyResolver}"
-            # No ResponseCache here on purpose: order data is
-            # user-specific and changes with every placed order, so
-            # caching it would risk serving stale results.
-            - name: CircuitBreaker
-              args:
-                name: orderServiceCB
-                fallbackUri: forward:/fallback/orders
-            - name: Retry
-              args:
-                retries: 2
-                statuses: BAD_GATEWAY, SERVICE_UNAVAILABLE, GATEWAY_TIMEOUT
-                methods: GET   # deliberately NOT retrying POST /orders - retrying a
-                               # non-idempotent "place order" call could double-create it
-                backoff:
-                  firstBackoff: 100ms
-                  maxBackoff: 1000ms
-                  factor: 2
-                  basedOnPreviousValue: false
+          # -----------------------------------------------------------------
+          # PRODUCT SERVICE: WRITES (Uncached & Strict Rate Limit)
+          # -----------------------------------------------------------------
+          - id: product-service-write-route
+            uri: lb://PRODUCT-SERVICE
+            predicates:
+              - Path=/api/products/**
+              - Method=POST,PUT,DELETE
+            filters:
+              - StripPrefix=1
+              - name: RequestRateLimiter
+                args:
+                  redis-rate-limiter.replenishRate: 5     # Prevents batch creation spamming
+                  redis-rate-limiter.burstCapacity: 10
+                  redis-rate-limiter.requestedTokens: 1
+                  key-resolver: "#{@ipKeyResolver}"
+              - name: CircuitBreaker
+                args:
+                  name: productServiceCB
+                  fallbackUri: forward:/fallback/products
+
+          # -----------------------------------------------------------------
+          # ORDER SERVICE: READS (Uncached & Moderate Capacity)
+          # -----------------------------------------------------------------
+          - id: order-service-read-route
+            uri: lb://ORDER-SERVICE
+            predicates:
+              - Path=/api/orders/**
+              - Method=GET
+            filters:
+              - StripPrefix=1
+              - name: RequestRateLimiter
+                args:
+                  redis-rate-limiter.replenishRate: 20    # Moderate capacity for viewing histories
+                  redis-rate-limiter.burstCapacity: 40
+                  redis-rate-limiter.requestedTokens: 1
+                  key-resolver: "#{@ipKeyResolver}"
+              - name: CircuitBreaker
+                args:
+                  name: orderServiceCB
+                  fallbackUri: forward:/fallback/orders
+              - name: Retry
+                args:
+                  retries: 2
+                  statuses: BAD_GATEWAY, SERVICE_UNAVAILABLE, GATEWAY_TIMEOUT
+                  methods: GET
+                  backoff:
+                    firstBackoff: 100ms
+                    maxBackoff: 1000ms
+                    factor: 2
+                    basedOnPreviousValue: false
+
+          # -----------------------------------------------------------------
+          # ORDER SERVICE: WRITES (Uncached & Ultra-Strict Rate Limit)
+          # -----------------------------------------------------------------
+          - id: order-service-write-route
+            uri: lb://ORDER-SERVICE
+            predicates:
+              - Path=/api/orders/**
+              - Method=POST,PUT,DELETE
+            filters:
+              - StripPrefix=1
+              - name: RequestRateLimiter
+                args:
+                  redis-rate-limiter.replenishRate: 2     # Highly protective: prevents automated bots
+                  redis-rate-limiter.burstCapacity: 5     # or script loops from placing double-orders.
+                  redis-rate-limiter.requestedTokens: 1
+                  key-resolver: "#{@ipKeyResolver}"
+              - name: CircuitBreaker
+                args:
+                  name: orderServiceCB
+                  fallbackUri: forward:/fallback/orders
 
     # -----------------------------------------------------------------
     # LOAD BALANCING (round robin, Spring Cloud LoadBalancer's default
