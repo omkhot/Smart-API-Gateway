@@ -67,6 +67,7 @@ services:
       - "8082:8082"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_WEB=DEBUG
     networks:
       - sag-network
     healthcheck:
@@ -91,6 +92,7 @@ services:
       - "8092:8082"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_WEB=DEBUG
     networks:
       - sag-network
     healthcheck:
