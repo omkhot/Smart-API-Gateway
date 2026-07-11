@@ -5,72 +5,92 @@ full production-style feature set, exercised against a small e-commerce
 microservice suite (Auth, User, Product, Order).
 
 ```
-✅ API Routing              ✅ Redis Rate Limiter (Token Bucket)
+✅ API Routing               ✅ Redis Rate Limiter (Token Bucket)
 ✅ Reverse Proxy             ✅ Round Robin Load Balancer
 ✅ Dynamic Route Config      ✅ Health Checks
 ✅ JWT Authentication        ✅ Response Cache + TTL
 ✅ Request Logging + IDs     ✅ Circuit Breaker
-                             ✅ Retry + Timeout Handling
-                             ✅ Metrics Dashboard (Prometheus + Grafana)
+✅ Retry + Timeout Handling
+✅ Metrics Dashboard (Prometheus + Grafana)
 ```
 
 ---
 
-## Architecture
+## High Level Architecture
+
+```mermaid
+    graph TB
+    %% Colors and Styles Configuration
+        classDef client fill:#E1F5FE,stroke:#0288D1,stroke-width:2px,color:#01579B;
+        classDef gateway fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px,color:#4A148C;
+        classDef infra fill:#ECEFF1,stroke:#455A64,stroke-width:2px,color:#263238;
+        classDef service fill:#E0F7FA,stroke:#0097A7,stroke-width:2px,color:#006064;
+    
+        Client[ Clients / Postman / Browser]:::client
+    
+    subgraph Gateway_Tier ["🚀 API Gateway Edge (Port 8080)"]
+    GW[Spring Cloud Gateway <br> JWT  Rate Limiter  Circuit Breaker]:::gateway
+    LB[Spring Cloud LoadBalancer]:::gateway
+    end
+    
+    subgraph Infra_Tier ["💾 Shared Infrastructure & Observability"]
+    Redis[(Redis <br> Cache & Rate Limits)]:::infra
+    Prometheus[Prometheus & Grafana <br> Metrics Dashboard]:::infra
+    end
+    
+    subgraph Microservices_Tier ["⚙️ Internal Microservices Cluster"]
+    Auth[auth-service :8084]:::service
+    User[user-service :8081]:::service
+    Order[order-service :8083]:::service
+    
+    subgraph Product_Cluster ["Load-Balanced Replicas"]
+    Prod1[product-service-1 :8082]:::service
+    Prod2[product-service-2 :8092]:::service
+    end
+    end
+    
+    Client -->|HTTP Requests| GW
+    GW <-->|State Sync| Redis
+    GW -.->|Actuator Metrics| Prometheus
+    GW --> LB
+    
+    LB --> Auth
+    LB --> User
+    LB --> Order
+    LB -->|Round Robin| Prod1 & Prod2
 
 ```
-                          ┌───────────────────────┐
-      Client         →    │    gateway-service     │   :8080
-  (Postman/curl/           │  (Spring Cloud Gateway) │
-   browser)                └───────────┬───────────┘
-                                        │
-        ┌──────────────┬───────────────┼───────────────┬──────────────┐
-        ▼              ▼               ▼               ▼              ▼
-  ┌───────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐
-  │auth-service│  │user-service│  │product-svc-1│  │product-svc-2│  │order-service│
-  │  :8084     │  │  :8081     │  │  :8082      │  │  :8082(int) │  │  :8083      │
-  └───────────┘  └────────────┘  └────────────┘  └────────────┘  └──────┬─────┘
-                                        ▲               ▲                │
-                                        └───── round robin ──────────────┘  order-service calls
-                                                                              user/product DIRECTLY
-                                                                              (bypasses gateway,
-                                                                               unchanged from earlier phases)
-
-                          ┌───────────────────────┐
-                          │   redis   (cache +     │  :6379
-                          │   rate limiter state)  │
-                          └───────────────────────┘
-
-                     ┌───────────┐        ┌───────────┐
-                     │ prometheus │  ───▶  │  grafana   │   :3000
-                     │   :9090    │        │            │
-                     └───────────┘        └───────────┘
-```
-
-- The client **only ever talks to the gateway** (port 8080). Everything
-  else is internal.
-- **auth-service** is the only place a JWT is *issued*. The gateway only
-  *validates* tokens using a shared secret - it has no idea how users are
-  stored, hashed, or authenticated. That's the "loosely coupled auth"
-  requirement.
-- **product-service** runs as **two instances** so the gateway's round-robin
-  load balancer has something real to balance across. `order-service`
-  still talks to instance #1 only, directly, completely unchanged from
-  earlier phases.
-- **Redis** backs both the rate limiter and the response cache.
-- **Prometheus + Grafana** give you a live metrics dashboard with zero
-  manual setup.
-
-> **Honest caveat:** since each `product-service` instance has its own
-> independent in-memory H2 database, their product/stock data is **not
-> shared** - creating a product or reducing stock on instance #1 won't be
-> visible on instance #2. This is a deliberate demo simplification (a real
-> deployment would share one database). It doesn't affect any of the
-> gateway features above - it only means "the two product-service replicas
-> may show slightly different data" if you poke at them directly.
-
 ---
 
+## Project structure
+
+```
+smart-api-gateway/
+├── docker-compose.yml                 one-command startup for all 9 containers
+├── pom.xml                            parent aggregator (Java 21, shared dependency versions)
+│
+├── gateway-service/                    core project
+│   ├── Dockerfile
+│   └── src/main/java/com/sag/gateway/
+│       ├── GatewayApplication.java
+│       ├── config/                     JWT + security + Redis config/properties
+│       ├── security/                   JWT VALIDATION only (never issues tokens)
+│       ├── filter/                     correlation ID/logging + custom response cache filter
+│       └── controller/                 dynamic route admin API + circuit-breaker fallbacks
+│
+├── demo-services/
+│   ├── auth-service/    (port 8084)    the ONLY place JWTs are issued
+│   ├── user-service/    (port 8081)
+│   ├── product-service/ (port 8082)    run as 2 instances for load balancing
+│   └── order-service/   (port 8083)    calls user/product-service directly
+│
+├── infra/
+│   ├── prometheus/prometheus.yml       scrape config
+│   └── grafana/                        auto-provisioned datasource + dashboard
+
+```
+
+---
 ## Prerequisites
 
 | Tool | Required version | Notes |
@@ -315,7 +335,7 @@ and the raw metrics feed the dashboard reads from is at
 
 ---
 
-## Security notes (read before treating this as production-ready)
+## Important Considerations
 
 - The JWT secret is a literal string in two YAML files, kept identical on
   purpose so the demo works out of the box. In production this belongs in
@@ -377,57 +397,3 @@ via Docker). Nothing else to clean up.
 
 ---
 
-## Project structure
-
-```
-smart-api-gateway/
-├── docker-compose.yml                 one-command startup for all 9 containers
-├── pom.xml                            parent aggregator (Java 21, shared dependency versions)
-│
-├── gateway-service/                    core project
-│   ├── Dockerfile
-│   └── src/main/java/com/sag/gateway/
-│       ├── GatewayApplication.java
-│       ├── config/                     JWT + security + Redis config/properties
-│       ├── security/                   JWT VALIDATION only (never issues tokens)
-│       ├── filter/                     correlation ID/logging + custom response cache filter
-│       └── controller/                 dynamic route admin API + circuit-breaker fallbacks
-│
-├── demo-services/
-│   ├── auth-service/    (port 8084)    the ONLY place JWTs are issued
-│   ├── user-service/    (port 8081)
-│   ├── product-service/ (port 8082)    run as 2 instances for load balancing
-│   └── order-service/   (port 8083)    calls user/product-service directly
-│
-├── infra/
-│   ├── prometheus/prometheus.yml       scrape config
-│   └── grafana/                        auto-provisioned datasource + dashboard
-│
-└── load-testing/                       NOTES.md - suggested next step (k6/JMeter scripts)
-```
-
----
-
-## Troubleshooting
-
-| Problem | Likely cause / fix |
-|---|---|
-| `mvn clean install` fails with plugin resolution errors | You're on Maven 3.5.x - upgrade to 3.9.x |
-| `500`: "Name for argument of type... not specified" | Requires the `-parameters` compiler flag (already set in the parent `pom.xml`) - run `mvn clean install` again after any pom changes |
-| `user-service`/`product-service` container exits immediately | Was caused by `data.sql` racing Hibernate's schema creation - already fixed via `spring.jpa.defer-datasource-initialization: true` |
-| Docker build fails with a TLS/`mirror.gcr.io` error | Docker Desktop bug, not a project issue - in Docker Desktop, uncheck **Settings → General → "Use containerd for pulling and storing images"**, then Apply & Restart |
-| `401 Unauthorized` on every request | Check your `Authorization: Bearer <token>` header is present and the token hasn't expired (1 hour) - get a fresh one via `/api/auth/login` |
-| Connection errors reaching Redis | Confirm the `redis` container is healthy: `docker compose ps` |
-| Grafana panel shows "No data" | See the note at the end of the Metrics Dashboard section above - metric names can shift slightly between library versions |
-| Gateway can't reach a demo-service in Docker | Check `docker compose logs gateway-service` - confirm all dependent containers show `healthy` in `docker compose ps` first |
-
----
-
-## What's deliberately out of scope
-
-- **Refresh tokens** - access tokens are single-shot with a 1-hour
-  expiry; re-login when they expire. Kept simple on purpose.
-- **A shared database for the two product-service instances** - see the
-  caveat in the Architecture section above.
-- **Load-testing scripts** - see `load-testing/NOTES.md` for the natural
-  next step if you want real throughput numbers for your demo.
