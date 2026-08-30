@@ -1,18 +1,12 @@
 # Smart API Gateway
 
-A standalone API Gateway built with **Spring Cloud Gateway**, demonstrating a
-full production-style feature set, exercised against a small e-commerce
-microservice suite (Auth, User, Product, Order).
+A robust, enterprise-grade **API Gateway** built with **Spring Cloud Gateway** and **Java 21**, designed for high throughput, seamless microservice routing, centralized security, dynamic configuration, and full observability. Demonstrated against an e-commerce microservices cluster.
 
-```
-✅ API Routing               ✅ Redis Rate Limiter (Token Bucket)
-✅ Reverse Proxy             ✅ Round Robin Load Balancer
-✅ Dynamic Route Config      ✅ Health Checks
-✅ JWT Authentication        ✅ Response Cache + TTL
-✅ Request Logging + IDs     ✅ Circuit Breaker
-✅ Retry + Timeout Handling
-✅ Metrics Dashboard (Prometheus + Grafana)
-```
+---
+
+## Project Overview
+
+**Smart API Gateway** serves as the single point of entry for client applications, abstracting backend microservices while managing cross-cutting concerns like dynamic routing, JWT validation, Redis-backed rate limiting, response caching, circuit breaking, round-robin load balancing, distributed tracing, and Prometheus/Grafana monitoring.
 
 ---
 
@@ -28,17 +22,17 @@ microservice suite (Auth, User, Product, Order).
     
         Client[ Clients / Postman / Browser]:::client
     
-    subgraph Gateway_Tier ["🚀 API Gateway Edge (Port 8080)"]
+    subgraph Gateway_Tier [" API Gateway Edge (Port 8080)"]
     GW[Spring Cloud Gateway <br> JWT  Rate Limiter  Circuit Breaker]:::gateway
     LB[Spring Cloud LoadBalancer]:::gateway
     end
     
-    subgraph Infra_Tier ["💾 Shared Infrastructure & Observability"]
+    subgraph Infra_Tier [" Shared Infrastructure & Observability"]
     Redis[(Redis <br> Cache & Rate Limits)]:::infra
     Prometheus[Prometheus & Grafana <br> Metrics Dashboard]:::infra
     end
     
-    subgraph Microservices_Tier ["⚙️ Internal Microservices Cluster"]
+    subgraph Microservices_Tier ["⚙ Internal Microservices Cluster"]
     Auth[auth-service :8084]:::service
     User[user-service :8081]:::service
     Order[order-service :8083]:::service
@@ -58,28 +52,28 @@ microservice suite (Auth, User, Product, Order).
     LB --> User
     LB --> Order
     LB -->|Round Robin| Prod1 & Prod2
-
 ```
+
 ---
 
-## Project structure
+## Project Structure
 
 ```
 smart-api-gateway/
-├── docker-compose.yml                 one-command startup for all 9 containers
-├── pom.xml                            parent aggregator (Java 21, shared dependency versions)
+├── docker-compose.yml                 
+├── pom.xml                           
 │
 ├── gateway-service/                    core project
 │   ├── Dockerfile
 │   └── src/main/java/com/sag/gateway/
 │       ├── GatewayApplication.java
 │       ├── config/                     JWT + security + Redis config/properties
-│       ├── security/                   JWT VALIDATION only (never issues tokens)
+│       ├── security/                   JWT VALIDATION only
 │       ├── filter/                     correlation ID/logging + custom response cache filter
 │       └── controller/                 dynamic route admin API + circuit-breaker fallbacks
 │
 ├── demo-services/
-│   ├── auth-service/    (port 8084)    the ONLY place JWTs are issued
+│   ├── auth-service/    (port 8084)    JWTs are issued
 │   ├── user-service/    (port 8081)
 │   ├── product-service/ (port 8082)    run as 2 instances for load balancing
 │   └── order-service/   (port 8083)    calls user/product-service directly
@@ -87,231 +81,231 @@ smart-api-gateway/
 ├── infra/
 │   ├── prometheus/prometheus.yml       scrape config
 │   └── grafana/                        auto-provisioned datasource + dashboard
-
 ```
 
 ---
-## Prerequisites
 
-| Tool | Required version | Notes |
-|---|---|---|
-| **Docker + Docker Compose** | Recent (Compose v2) | **This is now the primary, recommended way to run the project** - see below |
-| **Java (JDK)** | **21** | Only needed if you want to run modules manually outside Docker |
-| **Maven** | **3.9.x** | Only needed for manual mode - do **not** use 3.5.x (too old for Spring Boot 3.x plugin tooling) |
+## Tech Stack
 
-Given the number of moving parts now (Redis, 5 Spring Boot services, 2
-product-service instances, Prometheus, Grafana), **Docker Compose is by
-far the easiest way to run this** - one command starts and correctly wires
-up all 9 containers. Manual/IDE mode is still fully documented further
-down for anyone who wants to debug a specific module.
+* **Language & Runtime:** Java 21
+* **Framework:** Spring Boot 3.x, Spring Cloud Gateway (Reactive / WebFlux)
+* **Security:** Spring Security, Reactive JWT (`jjwt`), BCrypt
+* **Resilience & Fault Tolerance:** Resilience4j (Circuit Breaker, Retry, Rate Limiter)
+* **Caching & Storage:** Redis, Spring Data Reactive Redis
+* **Load Balancing:** Spring Cloud LoadBalancer
+* **Observability & Monitoring:** Micrometer, Prometheus, Grafana
+* **Containerization:** Docker, Docker Compose
+* **Build System:** Apache Maven 3.9+
 
 ---
 
-## Quick Start (Docker Compose - recommended)
+## Running the Project (Docker Compose)
 
+### 1. Start All Services
 ```bash
-# From the project root (where docker-compose.yml lives)
+# Clone the repository and navigate to root directory
+git clone https://github.com/your-username/smart-api-gateway.git
+cd smart-api-gateway
+
+# Build and start all 9 containers in background mode
 docker compose up --build -d
 ```
 
-First run takes a few minutes (Maven builds each module inside its own
-container). Subsequent runs are much faster thanks to Docker layer
-caching.
-
-**Check everything is healthy:**
+### 2. Verify Container Health
 ```bash
 docker compose ps
 ```
-You should see 9 containers: `redis`, `auth-service`, `user-service`,
-`product-service`, `product-service-2`, `order-service`,
-`gateway-service`, `prometheus`, `grafana` - all `healthy` or `running`.
+*You should see 9 healthy containers: `gateway-service`, `auth-service`, `user-service`, `product-service`, `product-service-2`, `order-service`, `redis`, `prometheus`, and `grafana`.*
 
-**To stop everything:**
+### 3. Tear Down / Stop
 ```bash
 docker compose down
 ```
-One command, tears down all 9 containers and the network. Nothing else
-to clean up (all databases are in-memory).
 
 ---
 
-## Try it out - a full walkthrough, feature by feature
+## Features & Results
 
-All requests below go through the gateway only (`http://localhost:8080`).
+Here is the complete walkthrough of all 12 core backend features implemented in the API Gateway with request payloads and visual verification.
 
-### 1. Register a user and log in (JWT Authentication)
+---
 
-A demo account already exists out of the box - `demo` / `Demo@1234` - so
-you can skip straight to login if you want.
-
+### Feature 1: API Routing
+* **Description:** Dynamically routes incoming HTTP requests to target downstream microservices based on URL path matching.
+* **Example Request Payload / Command:**
 ```bash
-# Register (optional - a "demo" user already exists)
-curl -X POST http://localhost:8080/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username":"sneha","password":"Sneha@1234"}'
-
-# Login - get a JWT
-curl -X POST http://localhost:8080/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"demo","password":"Demo@1234"}'
+curl -i http://localhost:8080/api/products   -H "Authorization: Bearer $TOKEN"
 ```
+* **Result:**
+  ![API Routing](screenshots/routing.png)
 
-Response looks like:
-```json
-{
-  "token": "eyJhbGciOiJIUzI1NiJ9...",
-  "tokenType": "Bearer",
-  "expiresInSeconds": 3600,
-  "username": "demo"
-}
-```
+---
 
-Save that token - every other endpoint needs it.
+### Feature 2: Reverse Proxy
+* **Description:** Acts as an edge gateway hiding backend microservice infrastructure and internal port topologies from public clients.
+* **Example Request Payload / Command:**
 ```bash
-export TOKEN="paste-your-token-here"
+curl -i http://localhost:8080/api/users   -H "Authorization: Bearer $TOKEN"
 ```
+* **Result:**
+  ![Reverse Proxy](screenshots/reverse-proxy.png)
 
-### 2. Confirm JWT validation is actually enforced
+---
 
+### Feature 3: Dynamic Route Configuration
+* **Description:** Enables runtime creation, updating, and deletion of routes via Admin API endpoints without requiring service restarts.
+* **Example Request Payload / Command:**
 ```bash
-# No token -> 401
-curl -i http://localhost:8080/api/products
-
-# With token -> 200
-curl -i http://localhost:8080/api/products -H "Authorization: Bearer $TOKEN"
-```
-
-### 3. Reverse Proxy / Routing
-
-```bash
-curl http://localhost:8080/api/users -H "Authorization: Bearer $TOKEN"
-curl http://localhost:8080/api/products -H "Authorization: Bearer $TOKEN"
-curl -X POST http://localhost:8080/api/orders -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" -d '{"userId":1,"productId":1,"quantity":2}'
-```
-
-### 4. Dynamic Route Configuration (no restart needed)
-
-List every currently active route (loaded from YAML + anything added at runtime):
-```bash
-curl http://localhost:8080/admin/routes
-```
-
-Add a brand-new route on the fly - here's a trivial example that proxies
-`/api/echo/**` to an external test endpoint:
-```bash
-curl -X POST http://localhost:8080/admin/routes \
-  -H "Content-Type: application/json" \
-  -d '{
+# Create route dynamically at runtime
+curl -X POST http://localhost:8080/admin/routes   -H "Content-Type: application/json"   -d '{
         "id": "demo-dynamic-route",
         "uri": "http://httpbin.org",
         "predicates": [{"name": "Path", "args": {"pattern": "/api/echo/**"}}],
         "filters": [{"name": "StripPrefix", "args": {"parts": "2"}}]
       }'
-```
-Check it took effect immediately (no restart):
-```bash
-curl http://localhost:8080/actuator/gateway/routes
-```
-Remove it just as easily:
-```bash
-curl -X DELETE http://localhost:8080/admin/routes/demo-dynamic-route
-```
-> Note: if you add/update a route with the **same id** as one of the
-> pre-loaded ones (e.g. `user-service-route`), both the YAML version and
-> your new version will exist side by side - use a unique id for anything
-> new, as in the example above.
 
-### 5. Request Logging + Correlation ID
+# Query active routes
+curl http://localhost:8080/admin/routes
+```
+* **Result:**
+  ![Dynamic Route Config](screenshots/Dynamic%20Route%20adding.png)
+  ![Dynamic Route Config](screenshots/List%20Routes.png)
 
+---
+
+### Feature 4: JWT Authentication & Authorization
+* **Description:** Performs reactive token validation at the gateway level to reject unauthorized requests before reaching internal microservices.
+* **Example Request Payload / Command:**
 ```bash
+# First-time User Registration
+curl -X POST http://localhost:8080/api/auth/register   -H "Content-Type: application/json"   -d '{"username":"varad","password":"varad@1234"}'
+
+# User Login to receive JWT
+curl -X POST http://localhost:8080/api/auth/login   -H "Content-Type: application/json"   -d '{"username":"demo","password":"Demo@1234"}'
+```
+* **Result:**
+  ![First Time Registration](screenshots/Auth-First-Time-Regestration.png)
+  ![Login Success](screenshots/Login-Success.png)
+* If the request to any microservice done without sending the token then it will show unauthorized error.
+* This helps to segregate the logic of authentication for every service at single place
+  ![With token](screenshots/With-Token-Response.png)
+  ![With token](screenshots/without-token-response.png)
+
+---
+
+### Feature 5: Request Logging + Correlation ID
+* **Description:** Generates or passes through unique `X-Correlation-Id` headers to ensure unified distributed logging across microservices.
+* **Example Request Payload / Command:**
+```bash
+curl -i http://localhost:8080/api/products   -H "Authorization: Bearer $TOKEN"   -H "X-Correlation-Id: trace-id-custom-99182"
+```
+* **Result:**
+  ![Logging Correlation ID](screenshots/logging-corelation-id.png)
+
+---
+
+### Feature 6: Retry + Timeout Handling
+* **Description:** Automatically retries transient GET request failures with exponential backoff while enforcing strict gateway gateway-to-backend timeouts.
+* **Example Request Payload / Command:**
+```bash
+# Triggered automatically when upstream services experience transient network blips
+curl -i http://localhost:8080/api/products   -H "Authorization: Bearer $TOKEN"
+```
+* **Result:**
+  ![Retry and Circuit Breaker Response](screenshots/circuit-breaker-1.png)
+
+---
+
+### Feature 7: Response Cache + TTL
+* **Description:** Caches downstream GET responses inside Redis with custom TTL policies to reduce database queries and improve latency.
+* **Example Request Payload / Command:**
+```bash
+# Initial request -> Cache MISS
+curl -i http://localhost:8080/api/products -H "Authorization: Bearer $TOKEN"
+
+# Subsequent request within 30s -> Cache HIT
 curl -i http://localhost:8080/api/products -H "Authorization: Bearer $TOKEN"
 ```
-Look for the `X-Correlation-Id` response header - the same ID appears in
-the gateway's logs (`docker compose logs gateway-service`) tying the
-request and response log lines together. Send your own and it's honored
-instead of a generated one:
-```bash
-curl -i http://localhost:8080/api/products \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "X-Correlation-Id: my-custom-trace-id-123"
-```
+* **Result:**
+  ![Cache Miss](screenshots/cache-miss.png)
+  ![Cache Hit](screenshots/cache-hit.png)
+  ![Caching Logs](screenshots/caching-logs.png)
 
-### 6. Redis Rate Limiter (Token Bucket)
+---
 
-The auth route is deliberately tight (5 requests/sec, burst 10) to
-simulate brute-force protection. Hammer it and watch some requests get
-`429 Too Many Requests`:
+### Feature 8: Redis Rate Limiter (Token Bucket Algorithm)
+* **Description:** Controls request throughput per client IP/Route using Redis-backed Token Bucket algorithm, returning `429 Too Many Requests` on breach.
+* **Example Request Payload / Command:**
 ```bash
+# Exceed rate limit thresholds (e.g., > 5 req/sec on login)
 for i in $(seq 1 20); do
-  curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8080/api/auth/login \
-    -H "Content-Type: application/json" -d '{"username":"demo","password":"wrong"}'
+  curl -s -o /dev/null -w "%{http_code}
+" -X POST http://localhost:8080/api/auth/login     -H "Content-Type: application/json" -d '{"username":"demo","password":"wrong"}'
 done
 ```
+* **Result:**
+  ![Rate Limiting](screenshots/rate-limiting.png)
+  ![Rate Limiting Logs](screenshots/rate-limiting-logs.png)
 
-### 7. Round Robin Load Balancer + Health Checks
+---
 
+### Feature 9: Circuit Breaker & Fallback
+* **Description:** Utilizes Resilience4j to prevent cascading system failure by opening circuit on downstream outage and executing clean fallback responses.
+* **Example Request Payload / Command:**
+```bash
+# Stop backend instances
+docker compose stop product-service product-service-2
+
+# Execute request -> Returns 503 Gateway Fallback JSON response
+curl -i http://localhost:8080/api/products -H "Authorization: Bearer $TOKEN"
+```
+* **Result:**
+  ![Circuit Breaker Fallback](screenshots/circuit-breaker-1.png)
+* This helps the other depended microservice to give proper error without halting for long time
+  ![Circuit Breaker Logs](screenshots/circuit-breaker-2.png)
+
+---
+
+### Feature 10: Round Robin Load Balancer
+* **Description:** Evenly distributes incoming traffic across healthy replica instances (`product-service` & `product-service-2`) via Spring Cloud LoadBalancer.
+* **Example Request Payload / Command:**
 ```bash
 for i in $(seq 1 6); do
-  curl -s -i http://localhost:8080/api/products \
-    -H "Authorization: Bearer $TOKEN" | grep -i "X-Upstream-Instance\|X-Cache"
+  curl -s -i http://localhost:8080/api/products     -H "Authorization: Bearer $TOKEN" | grep -i "X-Upstream-Instance"
 done
 ```
-Watch `X-Upstream-Instance` alternate between the two product-service
-containers (round robin) on cache MISSes. If you stop one instance
-(`docker compose stop product-service-2`), the health-check-aware load
-balancer detects it within ~10s and routes everything to the remaining
-instance automatically - no errors, no restart needed.
+* **Evidence / Result:**
+  ![Round Robin Load Balancing](screenshots/load-balancer-RR.png)
+* If only one instance is up then traffic will go to the only one up instance
+  ![Load Balancer Health Check](screenshots/load-balancer-health.png)
 
-### 8. Response Cache + TTL
+---
 
+### Feature 11: Health Checks
+* **Description:** Actively monitors container health metrics and automatically routes traffic away from unhealthy or unreachable microservices.
+* **Example Request Payload / Command:**
 ```bash
-# First call - MISS (hits the real service)
-curl -i http://localhost:8080/api/products -H "Authorization: Bearer $TOKEN" | grep -i X-Cache
-
-# Second call within 30s - HIT (served from Redis, no upstream call)
-curl -i http://localhost:8080/api/products -H "Authorization: Bearer $TOKEN" | grep -i X-Cache
-
-# Wait 30+ seconds, call again - MISS again (TTL expired)
+curl -i http://localhost:8080/actuator/health
 ```
+* **Result:**
+* Shows that when one of the server is down then traffic is routed to rest one 
+  ![Load Balancer Health Check](screenshots/load-balancer-health.png)
 
-### 9. Circuit Breaker + Retry + Timeout
+---
 
-Stop a downstream service and watch the gateway degrade gracefully
-instead of hanging or erroring raw:
+### Feature 12: Metrics Dashboard (Prometheus + Grafana)
+* **Description:** Exports gateway operational metrics via Spring Actuator & Prometheus, presenting live request rates, latencies, and circuit breaker status in Grafana.
+* **Example Request Payload / Command:**
 ```bash
-docker compose stop product-service product-service-2
-curl -i http://localhost:8080/api/products -H "Authorization: Bearer $TOKEN"
-# -> 503, clean JSON body from the gateway's own fallback controller,
-#    not a connection-refused error or a long hang
-docker compose start product-service product-service-2
+# Prometheus endpoint
+curl http://localhost:8080/actuator/prometheus
+
+# Grafana Dashboard UI
+http://localhost:3000
 ```
-The **Retry** filter (2 retries with backoff) fires first for transient
-failures on GET requests; if the breaker has already tripped open after
-repeated failures, requests go straight to the fallback for ~10 seconds
-before it tries again (half-open state).
-
-### 10. Metrics Dashboard
-
-Open **http://localhost:3000** (Grafana - no login needed, anonymous
-viewing is enabled; `admin`/`admin` if you want to edit). The "Smart API
-Gateway" dashboard is pre-loaded with:
-- Request rate by route
-- Average response time by route
-- Requests by outcome (success / client error / server error)
-- Cache hit vs miss rate
-- Circuit breaker state
-- Gateway JVM heap usage
-
-Raw Prometheus is also browsable directly at **http://localhost:9090**,
-and the raw metrics feed the dashboard reads from is at
-`http://localhost:8080/actuator/prometheus`.
-
-> If a panel shows "No data", the underlying Micrometer metric name may
-> have shifted slightly in a Spring Cloud Gateway/Resilience4j version
-> newer than this project was built against - check the exact metric
-> name at `/actuator/prometheus` and adjust the panel's query in Grafana
-> (Dashboard settings → JSON Model, or edit the panel directly).
+* **Result:**
+  ![Live Grafana Dashboard 1](screenshots/Live-Grafana-1.png)
+  ![Live Grafana Dashboard 2](screenshots/Live-Grafana-2.png)
 
 ---
 
@@ -331,7 +325,7 @@ and the raw metrics feed the dashboard reads from is at
 | GET | `/actuator/gateway/routes` | No | Raw routing table |
 | GET | `/actuator/prometheus` | No | Raw metrics feed |
 
-\* Left open for demo convenience - see "Security notes" below.
+\* Left open for demo convenience
 
 ---
 
@@ -386,14 +380,4 @@ cd demo-services/order-service && mvn spring-boot:run
 # Terminal 6
 cd gateway-service && mvn spring-boot:run
 ```
-
-If you skip Terminal 4, everything still works fine - the gateway's
-health-check-aware load balancer detects the second instance is
-unreachable and quietly routes everything to instance #1 only, no errors.
-
-### To stop
-`Ctrl + C` in each terminal (and `docker stop redis` if you started Redis
-via Docker). Nothing else to clean up.
-
 ---
-

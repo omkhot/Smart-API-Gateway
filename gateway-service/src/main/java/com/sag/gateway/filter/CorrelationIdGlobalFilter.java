@@ -21,11 +21,7 @@ import java.util.UUID;
 
 /**
  * Runs first, before every other filter (including JWT auth). Ensures
- * every request - authenticated or not, successful or not - carries a
- * correlation ID that ties its log lines together, and logs a start/end
- * line with timing. If the caller already sent an X-Correlation-Id
- * header (e.g. a client that wants to trace its own request across
- * services), that value is honored instead of generating a new one.
+ * every request - authenticated or not, successful or not
  */
 @Component
 public class CorrelationIdGlobalFilter implements GlobalFilter, Ordered {
@@ -54,10 +50,6 @@ public class CorrelationIdGlobalFilter implements GlobalFilter, Ordered {
         ServerHttpResponseDecorator decoratedResponse = new ServerHttpResponseDecorator(originalResponse) {
             @Override
             public Mono<Void> writeWith(Publisher<? extends DataBuffer> body) {
-                // This part genuinely can only happen here: the resolved
-                // load-balanced instance isn't known until routing has
-                // already occurred, and headers can only be set before
-                // the response is committed (i.e. right before writeWith).
                 addUpstreamInstanceHeaderIfPresent(exchange, this);
                 return super.writeWith(body);
             }

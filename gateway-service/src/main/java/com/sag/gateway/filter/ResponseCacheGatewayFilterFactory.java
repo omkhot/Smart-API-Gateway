@@ -60,25 +60,25 @@ public class ResponseCacheGatewayFilterFactory
             }
 
             String cacheKey = buildCacheKey(request);
-            log.info("CACHE-DEBUG: [1] checking key '{}'", cacheKey);
 
             return redisTemplate.opsForValue().get(cacheKey)
-                    .doOnNext(v -> log.info("CACHE-DEBUG: [2a] found cached value for '{}' -> HIT", cacheKey))
-                    .flatMap(cachedBody -> serveFromCache(exchange, cachedBody))
+                    .flatMap(cachedBody -> {
+                        log.debug("Cache HIT for '{}'", cacheKey);
+                        return serveFromCache(exchange, cachedBody).thenReturn(true);
+                    })
                     .switchIfEmpty(Mono.defer(() -> {
-                        log.info("CACHE-DEBUG: [2b] no cached value for '{}' -> MISS, proceeding to upstream", cacheKey);
-                        return fetchAndCache(exchange, chain, cacheKey, config.getTtlSeconds());
+                        log.debug("Cache MISS for '{}'", cacheKey);
+                        return fetchAndCache(exchange, chain, cacheKey, config.getTtlSeconds()).thenReturn(true);
                     }))
-                    .doOnError(e -> log.error("CACHE-DEBUG: [ERR] top-level pipeline error for '{}': {}",
-                            cacheKey, e.toString(), e));
+                    .then()
+                    .doOnError(e -> log.error("Cache pipeline error for '{}': {}", cacheKey, e.toString(), e));
         };
 
-        // FIX: Force this filter to execute BEFORE NettyWriteResponseFilter (which is -1)
         return new OrderedGatewayFilter(filter, -2);
     }
 
     private Mono<Void> serveFromCache(ServerWebExchange exchange, String cachedBody) {
-        log.info("CACHE-DEBUG: [3] writing HIT response back to client, bodyLength={}", cachedBody.length());
+        log.info("CACHE : writing HIT response back to client, bodyLength={}", cachedBody.length());
         ServerHttpResponse response = exchange.getResponse();
         response.getHeaders().set("Content-Type", "application/json");
         response.getHeaders().set("X-Cache", "HIT");
@@ -97,10 +97,10 @@ public class ResponseCacheGatewayFilterFactory
         ServerHttpResponseDecorator decoratedResponse = new ServerHttpResponseDecorator(originalResponse) {
             @Override
             public Mono<Void> writeWith(Publisher<? extends DataBuffer> body) {
-                log.info("CACHE-DEBUG: [4] writeWith() ENTERED for key '{}'", cacheKey);
+                log.info("CACHE : writeWith() ENTERED for key '{}'", cacheKey);
 
                 return DataBufferUtils.join(Flux.from(body))
-                        .doOnNext(joined -> log.info("CACHE-DEBUG: [5] joined buffer has {} readable bytes",
+                        .doOnNext(joined -> log.info("CACHE : joined buffer has {} readable bytes",
                                 joined.readableByteCount()))
                         .flatMap(joined -> {
                             byte[] bytes = new byte[joined.readableByteCount()];
@@ -111,30 +111,30 @@ public class ResponseCacheGatewayFilterFactory
                                     Mono.just(BUFFER_FACTORY.wrap(bytes)));
 
                             HttpStatusCode status = getStatusCode();
-                            log.info("CACHE-DEBUG: [6] response status={}, bodyBytes={}",
+                            log.info("CACHE : response status={}, bodyBytes={}",
                                     status, bytes.length);
 
                             if (status != null && status.is2xxSuccessful() && bytes.length > 0) {
                                 String bodyAsString = new String(bytes, StandardCharsets.UTF_8);
-                                log.info("CACHE-DEBUG: [7] attempting Redis SET key='{}' ttl={}s", cacheKey, ttlSeconds);
+                                log.info("CACHE : attempting Redis SET key='{}' ttl={}s", cacheKey, ttlSeconds);
 
                                 return redisTemplate.opsForValue()
                                         .set(cacheKey, bodyAsString, Duration.ofSeconds(ttlSeconds))
-                                        .doOnSuccess(ok -> log.info("CACHE-DEBUG: [8] Redis SET SUCCESS key='{}' result={}", cacheKey, ok))
-                                        .doOnError(e -> log.error("CACHE-DEBUG: [8-ERR] Redis SET FAILED key='{}': {}",
+                                        .doOnSuccess(ok -> log.info("CACHE : Redis SET SUCCESS key='{}' result={}", cacheKey, ok))
+                                        .doOnError(e -> log.error("CACHE : Redis SET FAILED key='{}': {}",
                                                 cacheKey, e.toString(), e))
                                         .onErrorReturn(false)
                                         .then(writeToClient);
                             }
 
-                            log.info("CACHE-DEBUG: [6b] NOT caching - status not 2xx or empty body");
+                            log.info("CACHE : NOT caching - status not 2xx or empty body");
                             return writeToClient;
                         })
                         .switchIfEmpty(Mono.defer(() -> {
-                            log.warn("CACHE-DEBUG: [5-EMPTY] joined body publisher was EMPTY for key '{}'", cacheKey);
+                            log.warn("CACHE : joined body publisher was EMPTY for key '{}'", cacheKey);
                             return super.writeWith(Flux.empty());
                         }))
-                        .doOnError(e -> log.error("CACHE-DEBUG: [WRITEWITH-ERR] error inside writeWith for '{}': {}",
+                        .doOnError(e -> log.error("CACHE : [WRITEWITH-ERR] error inside writeWith for '{}': {}",
                                 cacheKey, e.toString(), e));
             }
         };

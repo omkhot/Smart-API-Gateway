@@ -23,19 +23,6 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Runs on every request before it's routed anywhere. If the path is one
- * of the configured public paths (auth endpoints, actuator, admin API,
- * fallback endpoints), it's let straight through. Otherwise, a valid
- * "Authorization: Bearer <token>" header is required - if it's missing,
- * malformed, expired, or signed with the wrong key, the request is
- * rejected with 401 before it ever reaches a demo-service.
- * <p>
- * On success, the validated username/role are forwarded to the
- * downstream service as plain headers (X-Auth-Subject / X-Auth-Role) so
- * services like order-service can know who's calling without needing to
- * touch a JWT library themselves.
- */
 @Component
 public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
 
