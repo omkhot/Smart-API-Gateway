@@ -279,6 +279,9 @@ done
 * If only one instance is up then traffic will go to the only one up instance
   ![Load Balancer Health Check](screenshots/load-balancer-health.png)
 
+* K6 Load testing and analysis of different latencies
+  ![K6 load balancing](screenshots/k6-load-testing.png)
+
 ---
 
 ### Feature 11: Health Checks
